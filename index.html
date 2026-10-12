@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>England Verteilungskarte</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<link rel="stylesheet" href="leaflet.css">
+<link rel="stylesheet" href="MarkerCluster.css">
+<link rel="stylesheet" href="MarkerCluster.Default.css">
+<style>
+/* Layout: fixed-height app shell — left filter rail (collapsible on phone) + map canvas filling the rest.
+   Standalone build: real OpenStreetMap tiles (works fine self-hosted, unlike inside a Claude artifact),
+   no shared database — filters only, exactly the previous Netlify tool but phone-friendly. */
+:root{
+  --bg:#f6f4ef; --surface:#ffffff; --surface-2:#eef0ea; --border:#d9d6cb;
+  --fg:#1d2420; --fg-muted:#5c6660; --accent:#0d6b4f; --accent-fg:#ffffff;
+  --accent-2:#b8863a; --danger:#b3432f; --success:#1f8a4c;
+  --shadow:0 8px 24px rgba(20,30,25,.12), 0 2px 6px rgba(20,30,25,.08);
+  font-size:15px;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#13201a; --surface:#192821; --surface-2:#1f3029; --border:#2d4238;
+  --fg:#eef3ef; --fg-muted:#9db3a7; --accent:#49c893; --accent-fg:#0b1711;
+  --accent-2:#d9a95c; --danger:#ef7a65; --success:#55c988;
+}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:"IBM Plex Sans",system-ui,sans-serif;overflow:hidden}
+.app{display:flex;height:100%;width:100%}
+
+/* --- Sidebar --- */
+.sidebar{width:328px;min-width:328px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;height:100%;z-index:20}
+.sidebar-head{padding:16px 18px 12px;border-bottom:1px solid var(--border)}
+.sidebar-head h1{font-size:16px;margin:0 0 2px;font-weight:700;letter-spacing:-.01em}
+.sidebar-head p{margin:0;font-size:12.5px;color:var(--fg-muted)}
+.sidebar-body{flex:1;overflow-y:auto;padding:14px 18px 30px}
+.section{margin-bottom:18px}
+.section h2{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--fg-muted);margin:0 0 8px;font-weight:600}
+input[type=text]{width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--fg);font-size:13.5px;font-family:inherit}
+input[type=text]:focus{outline:2px solid var(--accent);outline-offset:1px}
+
+.brackets{display:flex;flex-direction:column;gap:3px}
+.bracket-row{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;cursor:pointer;font-size:12.5px;user-select:none}
+.bracket-row:hover{background:var(--surface-2)}
+.bracket-row.off{opacity:.35}
+.swatch{width:13px;height:13px;border-radius:3px;flex:none}
+.bracket-row .cnt{margin-left:auto;color:var(--fg-muted);font-size:11px}
+
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12.5px;margin-bottom:5px;color:var(--fg-muted)}
+.field input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--fg);font-size:14px;font-family:"IBM Plex Mono",monospace;font-weight:600}
+.field input[type=number]:focus{outline:2px solid var(--accent);outline-offset:1px}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0}
+.toggle-row span{font-size:13px;font-weight:500}
+.switch{position:relative;width:38px;height:22px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.slider-pill{position:absolute;inset:0;background:var(--border);border-radius:22px;cursor:pointer;transition:.15s}
+.slider-pill:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:var(--surface);border-radius:50%;transition:.15s}
+.switch input:checked + .slider-pill{background:var(--accent)}
+.switch input:checked + .slider-pill:before{transform:translateX(16px)}
+
+.chiprow{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--border);background:var(--surface-2);color:var(--fg);padding:5px 10px;border-radius:999px;font-size:12px;cursor:pointer}
+.chip.active{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+
+.viewmode{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.viewmode button{flex:1;padding:8px;background:var(--surface-2);color:var(--fg);border:none;font-size:12.5px;font-weight:600;cursor:pointer}
+.viewmode button.active{background:var(--accent);color:var(--accent-fg)}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--fg);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{border-color:var(--accent)}
+
+/* --- Map --- */
+.mapwrap{flex:1;position:relative;height:100%}
+#map{height:100%;width:100%;background:var(--surface-2)}
+.menu-btn{display:none;position:absolute;left:12px;top:12px;z-index:450;width:40px;height:40px;border-radius:8px;background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow);cursor:pointer;color:var(--fg);font-size:18px}
+
+/* --- Popups --- */
+.leaflet-popup-content-wrapper{background:var(--surface);color:var(--fg);border-radius:10px}
+.leaflet-popup-tip{background:var(--surface)}
+.pop{font-family:"IBM Plex Sans",sans-serif;min-width:200px}
+.pop h3{margin:0 0 4px;font-size:14px}
+.pop .meta{font-size:12px;color:var(--fg-muted);line-height:1.5}
+.pop .badge{display:inline-block;background:var(--accent);color:var(--accent-fg);font-size:10px;padding:1px 7px;border-radius:999px;margin-bottom:5px;font-weight:600}
+
+@media (max-width:760px){
+  .sidebar{position:absolute;left:0;top:0;bottom:0;transform:translateX(-100%);transition:transform .2s;width:86vw;max-width:360px;box-shadow:var(--shadow)}
+  .sidebar.open{transform:translateX(0)}
+  .menu-btn{display:flex;align-items:center;justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <h1>England Verteilungskarte</h1>
+      <p>Muslim. Bevölkerung (Census 2021) · Moscheen · Läden</p>
+    </div>
+    <div class="sidebar-body">
+
+      <div class="section">
+        <h2>Suche</h2>
+        <input type="text" id="search" placeholder="Ort, Moschee oder Laden suchen…">
+      </div>
+
+      <div class="section">
+        <h2>Ansicht</h2>
+        <div class="viewmode">
+          <button id="vbtn-points" class="active">Punkte</button>
+          <button id="vbtn-area">Flächen</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Muslim. Anteil je Ward</h2>
+        <div class="brackets" id="brackets"></div>
+      </div>
+
+      <div class="section">
+        <div class="field">
+          <label>Mindestens Muslime (absolut)</label>
+          <input type="number" id="minmuslim" min="0" step="50" value="500" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label>Mindest-Einwohnerzahl</label>
+          <input type="number" id="minpop" min="0" step="100" value="0" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="toggle-row">
+          <span>Moscheen anzeigen</span>
+          <label class="switch"><input type="checkbox" id="showMosques" checked><span class="slider-pill"></span></label>
+        </div>
+        <div class="field">
+          <label>Moschee-Mindestkapazität</label>
+          <input type="number" id="minmosquecap" min="0" step="50" value="0" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="toggle-row">
+          <span>Läden &amp; Restaurants</span>
+          <label class="switch"><input type="checkbox" id="showShops" checked><span class="slider-pill"></span></label>
+        </div>
+        <div class="chiprow" id="shopCats"></div>
+      </div>
+
+      <div class="section">
+        <button class="btn" id="locateBtn">📍 Meinen Standort finden</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="mapwrap">
+    <button class="menu-btn" id="menuBtn">☰</button>
+    <div id="map"></div>
+  </div>
+</div>
+
+<script src="leaflet.js"></script>
+<script src="leaflet.markercluster.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ---------- state ---------- */
+let rawData=[], mosqueData=[], shopData=[], choroData=null;
+let activeBrackets = new Set([1,2,3,4,5,6,7,8,9,10]);
+let activeCats = new Set();
+
+const BRACKET_DEFS=[
+  [90,100,'#5b1a1a'],[80,90,'#7a2318'],[70,80,'#98301b'],[60,70,'#b8481f'],
+  [50,60,'#c96a26'],[40,50,'#cf8f2e'],[30,40,'#c7ab3c'],[20,30,'#9fae4a'],
+  [10,20,'#5f9d5a'],[0,10,'#2f7d5c']
+];
+function bracketFor(pct){
+  for(let i=0;i<BRACKET_DEFS.length;i++){const [lo,hi]=BRACKET_DEFS[i]; if(pct>=lo && (pct<hi || hi===100)) return 10-i;}
+  return 1;
+}
+function colorFor(bracketIdx){ return BRACKET_DEFS[10-bracketIdx][2]; }
+
+/* ---------- map ---------- */
+const map=L.map('map',{zoomControl:false}).setView([53.0,-1.8],6.4);
+L.control.zoom({position:'bottomright'}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OpenStreetMap-Mitwirkende'}).addTo(map);
+
+const wardCluster=L.markerClusterGroup({maxClusterRadius:40});
+const mosqueCluster=L.markerClusterGroup({maxClusterRadius:50, iconCreateFunction:c=>L.divIcon({html:`<div style="background:#0d6b4f;color:#fff;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font:700 12px sans-serif;border:2px solid #fff">${c.getChildCount()}</div>`,className:'',iconSize:[34,34]})});
+const shopCluster=L.markerClusterGroup({maxClusterRadius:50, iconCreateFunction:c=>L.divIcon({html:`<div style="background:#b8863a;color:#fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font:700 11px sans-serif;border:2px solid #fff">${c.getChildCount()}</div>`,className:'',iconSize:[30,30]})});
+let choroLayer=null;
+map.addLayer(wardCluster); map.addLayer(mosqueCluster); map.addLayer(shopCluster);
+
+/* ---------- markers ---------- */
+function mosqueIcon(){ return L.divIcon({html:'<div style="background:#0d6b4f;width:14px;height:14px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>',className:'',iconSize:[14,14]}); }
+function shopIcon(){ return L.divIcon({html:'<div style="background:#b8863a;width:11px;height:11px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>',className:'',iconSize:[11,11]}); }
+
+function rebuildMosques(){
+  mosqueCluster.clearLayers();
+  if(!document.getElementById('showMosques').checked) return;
+  const minCap=+document.getElementById('minmosquecap').value||0;
+  mosqueData.forEach(m=>{
+    const [name,capacity,address,loc,lat,lon]=m;
+    if(capacity && capacity<minCap) return;
+    if(minCap>0 && !capacity) return;
+    const mk=L.marker([lat,lon],{icon:mosqueIcon()});
+    mk.bindPopup(`<div class="pop"><span class="badge">Moschee</span><h3>${name}</h3><div class="meta">${capacity?('Kapazität: ~'+capacity+'<br>'):''}${address||''}</div></div>`);
+    mosqueCluster.addLayer(mk);
+  });
+}
+function rebuildShops(){
+  shopCluster.clearLayers();
+  if(!document.getElementById('showShops').checked) return;
+  shopData.forEach(s=>{
+    const [ward,category,name,address,rating,phone,lat,lon]=s;
+    if(activeCats.size && !activeCats.has(category)) return;
+    const mk=L.marker([lat,lon],{icon:shopIcon()});
+    mk.bindPopup(`<div class="pop"><span class="badge">${category||'Laden'}</span><h3>${name}</h3><div class="meta">${address||''}${phone?('<br>'+phone):''}${rating?(' · ⭐'+rating):''}</div></div>`);
+    shopCluster.addLayer(mk);
+  });
+}
+
+function isBracketActive(pct){ return activeBrackets.has(bracketFor(pct)); }
+
+function rebuildWards(){
+  wardCluster.clearLayers();
+  const minM=+document.getElementById('minmuslim').value||0;
+  const minP=+document.getElementById('minpop').value||0;
+  rawData.forEach(w=>{
+    const [name,count,pct,la,region,pop,lat,lon]=w;
+    if(!isBracketActive(pct)) return;
+    if(count<minM) return;
+    if(pop<minP) return;
+    const b=bracketFor(pct);
+    const mk=L.circleMarker([lat,lon],{radius:6,fillColor:colorFor(b),color:'#fff',weight:1,fillOpacity:.85});
+    mk.bindPopup(`<div class="pop"><h3>${name}</h3><div class="meta">${la} · ${region}<br>${count.toLocaleString()} Muslime (${pct}%) von ${pop.toLocaleString()} Einwohnern</div></div>`);
+    wardCluster.addLayer(mk);
+  });
+}
+
+let currentView='points';
+function choroStyle(f){
+  const p=f.properties;
+  const active = isBracketActive(p.p) && p.c>=(+document.getElementById('minmuslim').value||0);
+  if(!active) return {weight:0,fillOpacity:0,opacity:0,interactive:false};
+  return {weight:.5,color:'rgba(255,255,255,.45)',fillColor:colorFor(bracketFor(p.p)),fillOpacity:.6,interactive:true};
+}
+let choroBuilding=null;
+function buildChoro(){
+  if(choroLayer || choroBuilding) return choroBuilding;
+  choroBuilding = fetch('choroplethData.json').then(r=>r.json()).then(choro=>{
+    choroData=choro;
+    choroLayer=L.geoJSON(choroData,{style:choroStyle,onEachFeature:(f,layer)=>{
+      const p=f.properties;
+      layer.bindPopup(`<div class="pop"><h3>${p.n}</h3><div class="meta">${p.l}<br>${p.c.toLocaleString()} Muslime (${p.p}%)</div></div>`);
+    }});
+  }).catch(()=>{});
+  return choroBuilding;
+}
+function refreshChoro(){ if(choroLayer) choroLayer.setStyle(choroStyle); }
+
+function setView(mode){
+  currentView=mode;
+  document.getElementById('vbtn-points').classList.toggle('active', mode==='points');
+  document.getElementById('vbtn-area').classList.toggle('active', mode==='area');
+  if(mode==='points'){
+    if(choroLayer) map.removeLayer(choroLayer);
+    map.addLayer(wardCluster);
+  }else{
+    map.removeLayer(wardCluster);
+    const areaBtn=document.getElementById('vbtn-area');
+    const label=areaBtn.textContent;
+    if(!choroLayer) areaBtn.textContent='Lädt…';
+    buildChoro().then(()=>{
+      areaBtn.textContent=label;
+      if(currentView==='area' && choroLayer){ choroLayer.addTo(map); }
+    });
+  }
+}
+document.getElementById('vbtn-points').onclick=()=>setView('points');
+document.getElementById('vbtn-area').onclick=()=>setView('area');
+
+/* ---------- sidebar controls ---------- */
+function buildBrackets(){
+  const el=document.getElementById('brackets');
+  BRACKET_DEFS.forEach(([lo,hi,color],i)=>{
+    const idx=10-i;
+    const row=document.createElement('div');
+    row.className='bracket-row'; row.dataset.idx=idx;
+    const cnt = rawData.filter(w=>bracketFor(w[2])===idx).length;
+    row.innerHTML=`<span class="swatch" style="background:${color}"></span><span>${lo}–${hi}%</span><span class="cnt">${cnt}</span>`;
+    row.onclick=()=>{
+      if(activeBrackets.has(idx)) activeBrackets.delete(idx); else activeBrackets.add(idx);
+      row.classList.toggle('off', !activeBrackets.has(idx));
+      rebuildWards(); refreshChoro();
+    };
+    el.appendChild(row);
+  });
+}
+function buildShopCats(){
+  const el=document.getElementById('shopCats');
+  const cats=[...new Set(shopData.map(s=>s[1]))].sort();
+  cats.forEach(c=>{
+    const chip=document.createElement('div'); chip.className='chip active'; chip.textContent=c;
+    activeCats.add(c);
+    chip.onclick=()=>{
+      if(activeCats.has(c)){activeCats.delete(c); chip.classList.remove('active');}
+      else{activeCats.add(c); chip.classList.add('active');}
+      rebuildShops();
+    };
+    el.appendChild(chip);
+  });
+}
+
+document.getElementById('minmuslim').addEventListener('input',()=>{rebuildWards();refreshChoro();});
+document.getElementById('minpop').addEventListener('input',()=>{rebuildWards();});
+document.getElementById('minmosquecap').addEventListener('input',()=>{rebuildMosques();});
+document.getElementById('showMosques').addEventListener('change',rebuildMosques);
+document.getElementById('showShops').addEventListener('change',rebuildShops);
+
+document.getElementById('search').addEventListener('input', e=>{
+  const q=e.target.value.trim().toLowerCase();
+  if(q.length<3) return;
+  let hit = rawData.find(w=>w[0].toLowerCase().includes(q));
+  if(hit){ map.setView([hit[6],hit[7]],13); return; }
+  hit = mosqueData.find(m=>m[0].toLowerCase().includes(q));
+  if(hit){ map.setView([hit[4],hit[5]],15); return; }
+  hit = shopData.find(s=>s[2].toLowerCase().includes(q));
+  if(hit){ map.setView([hit[6],hit[7]],15); return; }
+});
+
+document.getElementById('locateBtn').onclick=()=>{
+  if(!navigator.geolocation){ return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    map.setView([pos.coords.latitude,pos.coords.longitude],14);
+    L.marker([pos.coords.latitude,pos.coords.longitude]).addTo(map).bindPopup('Du bist hier').openPopup();
+  }, ()=>{}, {timeout:8000});
+};
+
+document.getElementById('menuBtn').onclick=()=>document.getElementById('sidebar').classList.toggle('open');
+
+/* ---------- data load ---------- */
+Promise.all([
+  fetch('rawData.json').then(r=>r.json()),
+  fetch('mosqueData.json').then(r=>r.json()),
+  fetch('shopData.json').then(r=>r.json()),
+]).then(([raw,mosques,shops])=>{
+  rawData=raw; mosqueData=mosques; shopData=shops;
+  buildBrackets(); buildShopCats();
+  rebuildWards(); rebuildMosques(); rebuildShops();
+}).catch(err=>{
+  document.getElementById('map').innerHTML='<div style="padding:40px;font-family:sans-serif">Daten konnten nicht geladen werden.</div>';
+});
+
+})();
+</script>
+</body>
+</html>
